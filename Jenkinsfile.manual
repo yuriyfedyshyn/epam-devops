@@ -1,0 +1,77 @@
+pipeline {
+    agent any
+
+    parameters {
+        choice(
+            name: 'TARGET_ENV',
+            choices: ['main', 'dev'],
+            description: 'Target environment'
+        )
+
+        string(
+            name: 'IMAGE_TAG',
+            defaultValue: 'v1.0',
+            description: 'Docker image tag'
+        )
+    }
+
+    stages {
+        stage('Set deployment variables') {
+            steps {
+                script {
+                    if (params.TARGET_ENV == 'main') {
+                        env.IMAGE_NAME = 'nodemain'
+                        env.CONTAINER_NAME = 'node-main'
+                        env.HOST_PORT = '3000'
+                    } else if (params.TARGET_ENV == 'dev') {
+                        env.IMAGE_NAME = 'nodedev'
+                        env.CONTAINER_NAME = 'node-dev'
+                        env.HOST_PORT = '3001'
+                    } else {
+                        error "Unsupported target environment: ${params.TARGET_ENV}"
+                    }
+
+                    env.APP_INTERNAL_PORT = '3000'
+                    env.FULL_IMAGE_NAME = "${env.IMAGE_NAME}:${params.IMAGE_TAG}"
+
+                    echo "Target environment: ${params.TARGET_ENV}"
+                    echo "Image: ${env.FULL_IMAGE_NAME}"
+                    echo "Container: ${env.CONTAINER_NAME}"
+                    echo "Host port: ${env.HOST_PORT}"
+                }
+            }
+        }
+
+        stage('Validate image') {
+            steps {
+                sh 'docker image inspect "${FULL_IMAGE_NAME}"'
+            }
+        }
+
+        stage('Deploy') {
+            steps {
+                sh '''
+                    set +e
+
+                    if docker ps -a --format '{{.Names}}' | grep -w "${CONTAINER_NAME}"; then
+                        echo "Stopping existing container: ${CONTAINER_NAME}"
+                        docker stop "${CONTAINER_NAME}"
+                        docker rm "${CONTAINER_NAME}"
+                    else
+                        echo "No existing container for ${CONTAINER_NAME}"
+                    fi
+
+                    set -e
+
+                    docker run -d \
+                      --name "${CONTAINER_NAME}" \
+                      --expose "${APP_INTERNAL_PORT}" \
+                      -p "${HOST_PORT}:${APP_INTERNAL_PORT}" \
+                      "${FULL_IMAGE_NAME}"
+
+                    docker ps
+                '''
+            }
+        }
+    }
+}
